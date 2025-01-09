@@ -1,5 +1,5 @@
 Overview
-This MQL4 Expert Advisor (EA) is designed for advanced chart visualization and trading management on xauusd. It provides several functionalities, including automated adjustment of Stop Loss (SL) and Take Profit (TP), drawing historical and dynamic support/resistance levels, and enhancing the chart with custom visual indicators.
+This MQL4 Expert Advisor (EA) is designed for advanced chart visualization and trading management. It provides several functionalities, including automated adjustment of Stop Loss (SL) and Take Profit (TP), drawing historical and dynamic support/resistance levels, and enhancing the chart with custom visual indicators.
 
 Key Features
 Dynamic Stop Loss and Take Profit Adjustment (UpdateSLTP):

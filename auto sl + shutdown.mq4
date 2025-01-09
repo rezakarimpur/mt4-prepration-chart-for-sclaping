@@ -4,8 +4,11 @@
 int OnInit()
 {
     Print("Combined nima Initialized.");
+    ChartSetInteger(0, CHART_SCALE, 0);           // Set chart scale (smallest possible value)
+    ChartSetInteger(0, CHART_WIDTH_IN_BARS, 1);   // Minimum number of bars visible (zoom all the way in)
 
     // Set chart properties
+
     ChartSetInteger(0, CHART_MODE, CHART_CANDLES);  // Set chart to candlestick
     ChartSetInteger(0, CHART_SHOW_GRID, false);     // Turn off grid
     ChartSetInteger(0, CHART_FOREGROUND, true);     // Enable foreground mode
@@ -13,9 +16,23 @@ int OnInit()
     ChartSetInteger(0, CHART_COLOR_FOREGROUND, clrWhite);    // Foreground color
     //ChartSetInteger(0, CHART_COLOR_BULL_CANDLE, clrLimeGreen); // Bull candle color
     //ChartSetInteger(0, CHART_COLOR_BEAR_CANDLE, clrGold);    // Bear candle color
+    DisplayCloseAndHighLowLines();
+    
+    
+    // draw half an hour chart
+    DrawHalfHourLinesToday();
+    /// today open
+    DrawTodayOpenLine();
+////
+    CreateScaleFixButton(); // Create the button on initialization
 
-    DrawStopLossHistory(); // Initialize Stop Loss history display
     return(INIT_SUCCEEDED);
+    
+    
+    
+    
+        // drawing 2300 of yesterday
+
 }
 
 //+------------------------------------------------------------------+
@@ -24,6 +41,10 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    // ObjectsDeleteAll(); // Remove all chart objects
+   
+    ObjectDelete("ScaleFixButton"); // Removes the button
+    ObjectDelete("SwingPointButton"); // Removes the Swing Point button
+    Print("Combined EA Deinitialized.");
     Print("Combined EA Deinitialized.");
 }
 
@@ -40,12 +61,337 @@ void OnTick()
      // Display round numbers for all active orders
     DisplayRoundNumbers();
     
-    // drawing 2300 of yesterday
-    DisplayCloseAndHighLowLines();
-    
-    // draw half an hour chart
-    DrawHalfHourLinesToday();
 
+    
+    /// swing points
+    DisplaySwingPoints();
+    /// counting stop loss
+    DrawStopLossHistory(); // Initialize Stop Loss history display
+    DetectBreakouts(20);//
+    DrawOpen1630Candle(); //draw 1630 open
+    DrawTrendLines();
+    CheckTrendLineBreaks();
+
+}
+
+void CheckTrendLineBreaks()
+{
+    int totalObjects = ObjectsTotal();
+    double currentPrice = Bid; // You can also use Ask depending on the breakout logic
+
+    for (int i = 0; i < totalObjects; i++) {
+        string objName = ObjectName(i);
+
+        // Only check for objects that are trendlines
+        if (ObjectType(objName) == OBJ_TREND) {
+            double price1 = ObjectGetDouble(0, objName, OBJPROP_PRICE1); // First price point
+            double price2 = ObjectGetDouble(0, objName, OBJPROP_PRICE2); // Second price point
+            datetime time1 = ObjectGetInteger(0, objName, OBJPROP_TIME1); // First time point
+            datetime time2 = ObjectGetInteger(0, objName, OBJPROP_TIME2); // Second time point
+
+            // Calculate the price of the trendline at the current time
+            if (TimeCurrent() >= time1 && TimeCurrent() <= time2) {
+                double slope = (price2 - price1) / (time2 - time1); // Slope of the trendline
+                double intercept = price1 - slope * time1;         // Intercept of the trendline
+                double expectedPrice = slope * TimeCurrent() + intercept;
+
+                // Check for a breakout
+                if ((currentPrice > expectedPrice && price1 < price2) ||  // Break above for upward trendlines
+                    (currentPrice < expectedPrice && price1 > price2)) { // Break below for downward trendlines
+                    Print("Trendline Breakout Detected: ", objName);
+                    Alert("Trendline Breakout Detected: ", objName);
+                }
+            }
+        }
+    }
+}
+
+void DetectBreakouts(int barsToCheck)
+{
+    // Initialize variables
+    double highestHigh = -1.0;  // Highest price in the range
+    double lowestLow = 1e8;     // Lowest price in the range
+    int rangeBars = barsToCheck; // Number of bars to calculate range
+
+    // Loop through the last N bars to determine the range
+    for (int i = 1; i <= rangeBars; i++) {
+        if (High[i] > highestHigh) highestHigh = High[i];
+        if (Low[i] < lowestLow) lowestLow = Low[i];
+    }
+
+    // Get the current price
+    double currentPrice = Bid;
+
+    // Check for Bullish Breakout
+    if (currentPrice > highestHigh) {
+        string breakoutLineName = "BullishBreakoutLine";
+        if (ObjectFind(0, breakoutLineName) == -1) {
+            ObjectCreate(0, breakoutLineName, OBJ_HLINE, 0, 0, highestHigh);
+            ObjectSetInteger(0, breakoutLineName, OBJPROP_COLOR, clrLime); // Green line for bullish breakout
+            ObjectSetInteger(0, breakoutLineName, OBJPROP_WIDTH, 2);
+            Print("Bullish Breakout detected at price: ", currentPrice);
+            Alert("Bullish Breakout detected at price: ", currentPrice);
+        }
+    }
+
+    // Check for Bearish Breakout
+    if (currentPrice < lowestLow) {
+        breakoutLineName = "BearishBreakoutLine";
+        if (ObjectFind(0, breakoutLineName) == -1) {
+            ObjectCreate(0, breakoutLineName, OBJ_HLINE, 0, 0, lowestLow);
+            ObjectSetInteger(0, breakoutLineName, OBJPROP_COLOR, clrRed); // Red line for bearish breakout
+            ObjectSetInteger(0, breakoutLineName, OBJPROP_WIDTH, 2);
+            Print("Bearish Breakout detected at price: ", currentPrice);
+            Alert("Bearish Breakout detected at price: ", currentPrice);
+        }
+    }
+}
+
+void DrawOpen1630Candle()
+{
+    // Get the current time
+    datetime currentTime = TimeCurrent();
+
+    // Get the start time of today
+    datetime todayStart = iTime(Symbol(), PERIOD_D1, 0);
+
+    // Calculate the time for the 16:30 candle
+    datetime time1630 = todayStart + (16 * 3600) + (30 * 60); // 16:30 = 16 hours + 30 minutes
+
+    // Check if the current time is 16:30 or later
+    if (currentTime >= time1630) {
+        // Find the open price of the 16:30 candle in the M1 timeframe
+        int index1630 = iBarShift(Symbol(), PERIOD_M1, time1630, true);
+        if (index1630 < 0) {
+            Print("Error: Unable to find the 16:30 candle.");
+            return;
+        }
+
+        double openPrice1630 = iOpen(Symbol(), PERIOD_M1, index1630);
+
+        // Define a unique name for the line
+        string lineName = "Open1630Line";
+
+        // Check if the line already exists
+        if (ObjectFind(0, lineName) == -1) {
+            // Create a horizontal line at the 16:30 open price
+            if (ObjectCreate(0, lineName, OBJ_HLINE, 0, 0, openPrice1630)) {
+                ObjectSetInteger(0, lineName, OBJPROP_COLOR, clrBlue); // Set line color to Blue
+                ObjectSetInteger(0, lineName, OBJPROP_WIDTH, 2);       // Set line width
+                ObjectSetInteger(0, lineName, OBJPROP_STYLE, STYLE_SOLID); // Solid line
+                Print("16:30 Open price line drawn: ", openPrice1630);
+            } else {
+                Print("Failed to create 16:30 Open line. Error: ", GetLastError());
+            }
+        } else {
+            Print("16:30 Open line already exists.");
+        }
+    } else {
+        Print("Current time is before 16:30.");
+    }
+}
+
+bool showTrendLines = false;  // Toggle for trendlines
+
+
+
+//+------------------------------------------------------------------+
+//| Create buttons                                                  |
+//+------------------------------------------------------------------+
+
+bool showSwingPoints = false; // Global variable to toggle Swing Points
+void CreateScaleFixButton()
+{
+    string scaleFixButton = "ScaleFixButton";
+    string swingPointButton = "SwingPointButton";
+    string trendLineButton = "TrendLineButton";
+    if (ObjectFind(0, scaleFixButton) == -1) {
+        ObjectCreate(0, scaleFixButton, OBJ_BUTTON, 0, 0, 0);
+        ObjectSetInteger(0, scaleFixButton, OBJPROP_CORNER, 2);
+        ObjectSetInteger(0, scaleFixButton, OBJPROP_XDISTANCE, 10);
+        ObjectSetInteger(0, scaleFixButton, OBJPROP_YDISTANCE, 40);
+        ObjectSetInteger(0, scaleFixButton, OBJPROP_XSIZE, 120);
+        ObjectSetInteger(0, scaleFixButton, OBJPROP_YSIZE, 30);
+        ObjectSetString(0, scaleFixButton, OBJPROP_TEXT, "Toggle Scale Fix");
+        ObjectSetInteger(0, scaleFixButton, OBJPROP_COLOR, clrBlack);
+        ObjectSetInteger(0, scaleFixButton, OBJPROP_STYLE, STYLE_SOLID);
+    }
+
+    if (ObjectFind(0, swingPointButton) == -1) {
+        ObjectCreate(0, swingPointButton, OBJ_BUTTON, 0, 0, 0);
+        ObjectSetInteger(0, swingPointButton, OBJPROP_CORNER, 2);
+        ObjectSetInteger(0, swingPointButton, OBJPROP_XDISTANCE, 10);
+        ObjectSetInteger(0, swingPointButton, OBJPROP_YDISTANCE, 70);
+        ObjectSetInteger(0, swingPointButton, OBJPROP_XSIZE, 120);
+        ObjectSetInteger(0, swingPointButton, OBJPROP_YSIZE, 30);
+        ObjectSetString(0, swingPointButton, OBJPROP_TEXT, "Toggle Swing Points");
+        ObjectSetInteger(0, swingPointButton, OBJPROP_COLOR, clrBlack);
+        ObjectSetInteger(0, swingPointButton, OBJPROP_STYLE, STYLE_SOLID);
+    }
+
+    // Trendline Button
+    if (ObjectFind(0, trendLineButton) == -1) {
+        ObjectCreate(0, trendLineButton, OBJ_BUTTON, 0, 0, 0);
+        ObjectSetInteger(0, trendLineButton, OBJPROP_CORNER, 2);
+        ObjectSetInteger(0, trendLineButton, OBJPROP_XDISTANCE, 10);
+        ObjectSetInteger(0, trendLineButton, OBJPROP_YDISTANCE, 100);
+        ObjectSetInteger(0, trendLineButton, OBJPROP_XSIZE, 120);
+        ObjectSetInteger(0, trendLineButton, OBJPROP_YSIZE, 30);
+        ObjectSetString(0, trendLineButton, OBJPROP_TEXT, "Toggle Trendlines");
+        ObjectSetInteger(0, trendLineButton, OBJPROP_COLOR, clrBlack);
+        ObjectSetInteger(0, trendLineButton, OBJPROP_STYLE, STYLE_SOLID);
+    }
+
+
+
+
+
+}
+
+//+------------------------------------------------------------------+
+//| Handle Button Clicks                                             |
+//+------------------------------------------------------------------+
+void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
+{
+    if (id == CHARTEVENT_OBJECT_CLICK) {
+        if (sparam == "ScaleFixButton") {
+            bool scaleFixState = ChartGetInteger(0, CHART_SCALEFIX);
+            scaleFixState = !scaleFixState;
+            ChartSetInteger(0, CHART_SCALEFIX, scaleFixState);
+            string newText = scaleFixState ? "Disable Scale Fix" : "Enable Scale Fix";
+            ObjectSetString(0, "ScaleFixButton", OBJPROP_TEXT, newText);
+            Print("Scale Fix toggled. New state: ", scaleFixState ? "Enabled" : "Disabled");
+        }
+        
+        if (sparam == "SwingPointButton") {
+            showSwingPoints = !showSwingPoints;
+            newText = showSwingPoints ? "Hide Swing Points" : "Show Swing Points";
+            ObjectSetString(0, "SwingPointButton", OBJPROP_TEXT, newText);
+            if (!showSwingPoints) {
+                ClearSwingPoints();
+            }
+        }
+    
+    
+         if (sparam == "TrendLineButton") {
+            showTrendLines = !showTrendLines;
+            newText = showTrendLines ? "Hide Trendlines" : "Show Trendlines";
+            ObjectSetString(0, "TrendLineButton", OBJPROP_TEXT, newText);
+            if (!showTrendLines) {
+               ClearTrendLines(); // Clear trendlines as well
+            }
+        }
+    }
+}
+//+------------------------------------------------------------------+
+//| Clear Trendlines                                                 |
+//+------------------------------------------------------------------+
+void ClearTrendLines()
+{
+    for (int i = ObjectsTotal() - 1; i >= 0; i--) {
+        string objName = ObjectName(i);
+
+        // Delete only trendlines
+        if (StringFind(objName, "HighTrendline_") == 0 || StringFind(objName, "LowTrendline_") == 0) {
+            ObjectDelete(objName);
+        }
+    }
+    Print("All Trendlines cleared.");
+}
+
+
+void ClearSwingPoints()
+{
+    // Loop through all objects on the chart
+    for (int i = ObjectsTotal() - 1; i >= 0; i--) {
+        string objName = ObjectName(i);
+
+        // Delete objects related to swing points and trendlines
+        if (StringFind(objName, "SwingPoint_") == 0 || StringFind(objName, "HighTrendline_") == 0 || StringFind(objName, "LowTrendline_") == 0) {
+            ObjectDelete(objName);
+        }
+    }
+
+}
+
+void DisplaySwingPoints()
+{
+    if (!showSwingPoints) return; // Only proceed if toggle is enabled
+
+    int barsToCheck = 100; // Number of bars to analyze
+    int swingCount = 0;
+
+    for (int i = 1; i < barsToCheck; i++) {
+        double currentHigh = High[i];
+        double currentLow = Low[i];
+        datetime currentTime = Time[i];
+
+        // Detect Swing High
+        if (currentHigh > High[i + 1] && currentHigh > High[i - 1]) {
+            string highLabelName = StringFormat("SwingPoint_High_%d", swingCount++);
+            ObjectCreate(0, highLabelName, OBJ_TEXT, 0, currentTime, currentHigh);
+            ObjectSetText(highLabelName, StringFormat("High: %.2f", currentHigh), 10, "Arial", clrLime);
+        }
+
+        // Detect Swing Low
+        if (currentLow < Low[i + 1] && currentLow < Low[i - 1]) {
+            string lowLabelName = StringFormat("SwingPoint_Low_%d", swingCount++);
+            ObjectCreate(0, lowLabelName, OBJ_TEXT, 0, currentTime, currentLow);
+            ObjectSetText(lowLabelName, StringFormat("Low: %.2f", currentLow), 10, "Arial", clrRed);
+        }
+    }
+
+    Print("Swing points detected and displayed.");
+}
+
+//+------------------------------------------------------------------+
+//| Draw Trendlines                                                  |
+//+------------------------------------------------------------------+
+void DrawTrendLines()
+{
+    if (!showTrendLines) return; // Only proceed if toggle is enabled
+
+    int barsToCheck = 100; // Number of bars to analyze
+    double lastHighPrice = -1;
+    double lastLowPrice = -1;
+    datetime lastHighTime = 0;
+    datetime lastLowTime = 0;
+
+    for (int i = 1; i < barsToCheck; i++) {
+        double currentHigh = High[i];
+        double currentLow = Low[i];
+        datetime currentTime = Time[i];
+
+        // Detect Swing High and draw trendline
+        if (currentHigh > High[i + 1] && currentHigh > High[i - 1]) {
+            if (lastHighPrice != -1) {
+                string highTrendlineName = StringFormat("HighTrendline_%d", i);
+                ObjectCreate(0, highTrendlineName, OBJ_TREND, 0, lastHighTime, lastHighPrice, currentTime, currentHigh);
+                ObjectSetInteger(0, highTrendlineName, OBJPROP_COLOR, clrLime);
+                ObjectSetInteger(0, highTrendlineName, OBJPROP_WIDTH, 1);
+                ObjectSetInteger(0, highTrendlineName, OBJPROP_RAY_RIGHT, false); // Disable ray
+
+            }
+            lastHighPrice = currentHigh;
+            lastHighTime = currentTime;
+        }
+
+        // Detect Swing Low and draw trendline
+        if (currentLow < Low[i + 1] && currentLow < Low[i - 1]) {
+            if (lastLowPrice != -1) {
+                string lowTrendlineName = StringFormat("LowTrendline_%d", i);
+                ObjectCreate(0, lowTrendlineName, OBJ_TREND, 0, lastLowTime, lastLowPrice, currentTime, currentLow);
+                ObjectSetInteger(0, lowTrendlineName, OBJPROP_COLOR, clrRed);
+                ObjectSetInteger(0, lowTrendlineName, OBJPROP_WIDTH, 1);
+                ObjectSetInteger(0, lowTrendlineName, OBJPROP_RAY_RIGHT, false); // Disable ray
+
+            }
+            lastLowPrice = currentLow;
+            lastLowTime = currentTime;
+        }
+    }
+
+    Print("Trendlines drawn based on swing points.");
 }
 
 //+------------------------------------------------------------------+
@@ -163,7 +509,7 @@ void DisplayRoundNumbers()
                 // Check if the price is a multiple of 5
                 if (MathMod(price, 5) == 0) {
                     ObjectSetInteger(0, objName, OBJPROP_COLOR, clrBlue);  // Blue for multiples of 5
-                    ObjectSetInteger(0, objName, OBJPROP_WIDTH, 2);       // Thicker line
+                    ObjectSetInteger(0, objName, OBJPROP_WIDTH, 1);       // Thicker line
                 } else {
                     ObjectSetInteger(0, objName, OBJPROP_COLOR, clrLavender); // Lavender for $1 steps
                     ObjectSetInteger(0, objName, OBJPROP_WIDTH, 1);           // Normal line width
@@ -409,4 +755,31 @@ void DrawHalfHourLinesToday()
 
     Print("Half-hour lines for today drawn between ", TimeToString(todayStart, TIME_DATE | TIME_MINUTES),
           " and ", TimeToString(currentTime, TIME_DATE | TIME_MINUTES));
+}
+
+
+
+
+void DrawTodayOpenLine()
+{
+    // Get the Open price of today
+    double todayOpen = iOpen(Symbol(), PERIOD_D1, 0);
+
+    // Define a unique name for the line
+    string openLineName = "TodayOpenLine";
+
+    // Check if the line already exists
+    if (ObjectFind(0, openLineName) == -1) {
+        // Create a horizontal line at today's Open price
+        if (ObjectCreate(0, openLineName, OBJ_HLINE, 0, 0, todayOpen)) {
+            ObjectSetInteger(0, openLineName, OBJPROP_COLOR, clrYellow); // Set line color to Yellow
+            ObjectSetInteger(0, openLineName, OBJPROP_WIDTH, 2);        // Set line width
+            ObjectSetInteger(0, openLineName, OBJPROP_STYLE, STYLE_SOLID); // Set line style to solid
+            Print("Today Open price line drawn: ", todayOpen);
+        } else {
+            Print("Failed to create Today Open line. Error: ", GetLastError());
+        }
+    } else {
+        Print("Today Open line already exists.");
+    }
 }
